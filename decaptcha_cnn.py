@@ -16,19 +16,20 @@ from sys import argv, exit # para execução na linha de comando
 #####################################
 
 # Hiper-parametros de treinamento
-learning_rate = 0.01 # taxa de aprendizado
-keep_prob_train = 0.5 # probabilidade de manter os dados no dropout
-gamma = 0.005 # fator de regularização dos parâmetros
+learning_rate = 1e-3 # taxa de aprendizado
+keep_prob_train = 0.45 # probabilidade de manter os dados no dropout
+gamma = 0.0005 # fator de regularização dos parâmetros
 batch_size = 32 # tamanho do mini-lote
 max_delta = 0.5 # quantidade de luminosidade máxima para ajustar
 rotate = True # se rotaciona os mini-lotes de treino (aumenta bastante o tempo de treino)
-rot_degree = 7 # quantidade máxima de graus para rotacionar a imagem
+rot_degree = 20 # quantidade máxima de graus para rotacionar a imagem
 restore = True # para resumir o treinamento de um checkpoint ou comecar do zero
 
 # Quantidade de treinamento
-training_iters = 20001 # iterações de treinamento
-display_step = 2000 # regularidade para mostrar resultados
-min_val_acc = 60 # acurácia mínima no set de validação para salvas
+training_iters = 30000 # iterações de treinamento
+display_step = 3000 # regularidade para mostrar resultados
+min_val_acc = 72 # acurácia mínima no set de validação para salvar
+show_learning = True # plota o custo a cada iteração
 
 # Hiper-parametros da Rede Neural (se manipulados, terá que treinar do zero)
 img_h = 36 # altura da imagem depois de cortar (deve ser multiplo de 4)
@@ -37,7 +38,7 @@ CL1_depth = 16 # profundidade do kernel da primeira camada convolucioal
 CL2_depth = 32 # profundidade do kernel da segunda camada convolucional
 CL3_depth = 64 # profundidade do kernel da terceira camada convolucional
 DL1_size = 128 # tamanho da primeira camada densa
-DL2_size = 256 # tamanho da segunda camada densa
+DL2_size = 128 # tamanho da segunda camada densa
 n_classes = 11  # quantidade de saida (10 dígitos mais nulo)
 seq_len = 6 # tamanho da máxima sequência de dígitos
 
@@ -66,7 +67,7 @@ def get_data(n_data):
 		
 		# cria os dados (X)
 		im = Image.open(img_file).convert('L') # carrega a imagem em preto e branco
-		imgx = np.array(im.getdata()) # convere imagem em array Numpy 
+		imgx = np.array(im.getdata()) # convere imagem em array Numpy
 		imgx = (imgx - imgx.mean()) / imgx.std() # normaliza imagem
 		image_data.append(imgx.reshape(40, 140)) # formata a imagem e junta aos dados
 		
@@ -122,20 +123,59 @@ def accuracy(pred_y, true_y):
 	true_labels = np.argmax(true_y, 2)
 	return  np.all(pred_labels == true_labels, 1).mean() * 100
 
+# softmax çoputacionalmente estável (para n ter problema de overflow em exp())
+def stable_softmax(x):
+	if len(x.shape) > 1:
+		tmp = np.max(x, axis = 1)
+		x -= tmp.reshape((x.shape[0], 1))
+		x = np.exp(x)
+		tmp = np.sum(x, axis = 1)
+		x /= tmp.reshape((x.shape[0], 1))
+	
+	else:
+		tmp = np.max(x)
+		x -= tmp
+		x = np.exp(x)
+		tmp = np.sum(x)
+		x /= tmp
+	
+	return x
+
+# converte a previsão do modelo em digitos do captcha
+def sample_digit(y_hat):
+	captcha_solved = [] 
+	for digit in y_hat:
+
+		# converte os scores em probabilidades válidas
+		softmax = stable_softmax(digit) - 0.0005
+		
+		# sorteia o dígito segundo a distribição condicional aprendida
+		sampled = np.random.multinomial(1, softmax)
+
+		number = str(sampled.argmax())
+		if number != '10': # ignora nulos
+			captcha_solved.append(number)
+
+	return ''.join(captcha_solved)
+
+
+
 # funções para aumento artificial de dados
 # rotaciona a imagem em um angulo aleatório entre -6 e 6
 def rotate_batch(imgs):
 	graus = np.random.randint(-rot_degree,rot_degree)
-	return ndimage.rotate(imgs, graus,mode='nearest', axes=(1,2), reshape=False)   
+	return ndimage.rotate(imgs, graus, mode='nearest', axes=(1,2), reshape=False)   
 
 def augment(image):
-	image = tf.image.random_brightness(image, max_delta, seed=None) # corta a img aleatoriamente
 	image = tf.random_crop(image, size=[img_h, img_w, 1]) # ajusta a luminosidade aleatoriamente
+	image = tf.image.random_brightness(image, max_delta, seed=None) # corta a img aleatoriamente
 	return image
 
 def center_crop(image):
 	image = tf.image.resize_image_with_crop_or_pad(image, img_h, img_w) # corta a imagem no centro
 	return image
+
+
 
 
 run_flags = argv[1:] # argumentos da linha de comando
@@ -159,7 +199,7 @@ tf_X = tf.cond(tf.less_equal(tf_keep_prob, 0.98), # usa prob de dropout para sab
 			   lambda: tf.map_fn(lambda image: center_crop(image), tf_X)) # caso testanto, corta imagen no centro
 
 
-################ Variáveis do grafo ##################
+################ Variáveis do grafo ################
 # Inicialização Xavier dos parâmetros
 init_wc1 = np.sqrt(6.0 / (img_w * img_h * 1 + img_w * img_h * CL1_depth))
 init_wc2 = np.sqrt(6.0 / (img_w * img_h * CL1_depth + img_w/2 * img_h/2 * CL2_depth))
@@ -325,28 +365,25 @@ with tf.Session() as sess:
 			print 'Nenhum checkpoint encontrado' 
 			exit(1)
 		
-		img_files = run_flags[1:]
-		X_pred = get_test_data(img_files)
+		img_files = run_flags[1:] # pega os arquivos das imagens
+		X_pred = get_test_data(img_files) # lê as imagens para teste
 
+		# alimeta o modelo com as imagens
 		feed_pred_dict = {tf_x_input : X_pred, tf_keep_prob:1.0}
-		y_pred = sess.run(prediction, feed_dict=feed_pred_dict)
-		y_pred = np.argmax(y_pred, 2)
+		y_pred = sess.run(prediction, feed_dict=feed_pred_dict) # gera o vetor com scores
 
 		for i in range(X_pred.shape[0]):
-			
-			plt.imshow(X_pred[i], interpolation='nearest', cmap='binary')
-			
-			cpt_figured =list(y_pred[i].astype('str'))
 
-			while cpt_figured[0] == '10':
-				cpt_figured.pop(0)
-			
-			cpt_figured = ''.join(cpt_figured)
-			
-			plt.title(cpt_figured)
+			cpt_figured = sample_digit(y_pred[i]) # sorteia os digitos comforme probabilidade
+			plt.imshow(X_pred[i], interpolation='nearest', cmap='binary') # plota a imagem
+			plt.title(cpt_figured, fontsize=40) # coloca o digito previsto como titulo
+			plt.axis('off')
 			plt.show()
+
+			# espera verificação
 			check = raw_input('Está correto?: [s/n]')
 			
+			# se estiver correto, renomeia o arquivo
 			if check == 's':
 				captcha_file = img_files[i]
 				os.system("mv " + captcha_file + ' test_imgs/' + cpt_figured)
@@ -359,10 +396,8 @@ with tf.Session() as sess:
 		ckpt = tf.train.get_checkpoint_state(save_dir)
 		saver.restore(sess, ckpt.model_checkpoint_path)
 		print "Sessão restaurada de ", ckpt.model_checkpoint_path, "."
-		last_saved = sess.run(global_step)
 	
 	else:
-		last_saved = 0 # para parada do treinamento
 		# apaga checkpoits antigos
 		print 'Apagando checkpoits antigos'
 		os.system("rm ./DECAPCHAcheckpoints/*") # comando linux para apagr arquivos
@@ -377,7 +412,10 @@ with tf.Session() as sess:
 	print 'Dimensões do set de teste: ', X_test.shape, y_test.shape, '\n\n'
 	
 	valid_acc = [] # para parada do treinamento e checkpoints 
+	train_loss = []
 	t0 = time() # começa o cronometro
+	no_inprove = 0
+
 	
 	# # para conferir vizualmente se o carregamento dos dados está correto
 	# for i in range(3):
@@ -400,16 +438,16 @@ with tf.Session() as sess:
 		# roda uma iteração de treino
 		feed_dict = {tf_x_input : batch_data, tf_y_input : batch_labels, tf_keep_prob: keep_prob_train}
 		i_global, _, l = sess.run([global_step, optimizer, loss], feed_dict=feed_dict)
-		
+		train_loss.append(l)
 		
 		# mostra os resultados esporadicamente
 		if (i_global % display_step == 0) or (step == training_iters - 1):
-			print 'Tempo para rodas %d iterações:' % (step+1), round((time()-t0)/60, 3), 'min'
+			print 'Tempo para rodar %d iterações:' % (step+1), round((time()-t0)/60, 3), 'min'
 			
 			feed_train_dict = {tf_x_input : batch_data, tf_keep_prob:1.0}
 			train_pred = sess.run(prediction, feed_dict=feed_train_dict)
 			acc_train = accuracy(train_pred, batch_labels) 
-			print 'Custo no min-lote na iteração %d: %.2f' % (i_global, l)
+			print 'Custo no min-lote na iteração %d: %.4f' % (i_global, l)
 			print 'Acurácia no min-lote: %.1f%%' % acc_train 
 			
 			feed_val_dict = {tf_x_input : X_test, tf_keep_prob:1.0}
@@ -424,8 +462,27 @@ with tf.Session() as sess:
 			if acc_val >= np.max(valid_acc) and acc_val > min_val_acc:
 				saver.save(sess, save_dir + 'model.ckpt', global_step=i_global+1)
 				print("Checkpoint!\n")
-				last_saved = i_global
+				no_inprove = 0	
 			
-			# se 50000 iterações de treino se passaram sem avanço, sai do treinamento
-			if last_saved < i_global - 50000:
-				break
+			# se 100 verificações se passaram sem avanço, sai do treinamento
+			# no_inprove += 1
+			# if no_inprove < 100:
+			# 	break
+
+
+	if show_learning:
+
+		# pega uma grande amostra do set de treino (cuidado com o RAM)
+		idx = np.random.randint(0, X_train.shape[0], 500)
+		Xs_train =  X_train[idx, :, :]
+		ys_train = y_train[idx, :]
+
+		# passa a amostra pelo modelo
+		feed_st_dict = {tf_x_input: Xs_train, tf_keep_prob:1.0}
+		pred_st = sess.run(prediction, feed_dict = feed_st_dict)
+		acc_st = accuracy(pred_st, ys_train)
+		print 'Acurácia no set de treino: %.1f%%' % acc_st
+
+		# plota a curva de custo por iteração
+		plt.plot(range(len(train_loss)), train_loss)
+		plt.show()
