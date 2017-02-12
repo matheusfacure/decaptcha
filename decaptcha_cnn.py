@@ -17,26 +17,26 @@ from sys import argv, exit # para execução na linha de comando
 
 # Hiper-parametros de otimização
 learning_rate = 0.01 # taxa de aprendizado
-batch_size = 32 # tamanho do mini-lote
+batch_size = 64 # tamanho do mini-lote
 rotate = True # se rotaciona os mini-lotes de treino (aumenta bastante o tempo de treino)
 restore = True # para resumir o treinamento de um checkpoint ou comecar do zero
 
 # Hiper-parametros de regularização
-keep_prob_train = 0.45 # probabilidade de manter os dados no dropout
-gamma = 0.01 # coedifiente de regularização L2 dos parâmetros das camadas densas
+keep_prob_train = 0.35 # probabilidade de manter os dados no dropout
+gamma = 0.05 # coedifiente de regularização L2 dos parâmetros das camadas densas
 max_delta = 0.5 # quantidade de luminosidade máxima para ajustar
 rot_degree = 20 # quantidade máxima de graus para rotacionar a imagem
 test_size = 0.03 # proporção do set de teste
 
 # Quantidade de treinamento
-training_iters = 50000 # iterações de treinamento
+training_iters = 150000 # iterações de treinamento
 display_step = 3000	 # regularidade para mostrar resultados
-min_val_acc = 70 # acurácia mínima no set de validação para salvar
+min_val_acc = 74 # acurácia mínima no set de validação para salvar
 show_learning = True # plota o custo a cada iteração
 
 # Hiper-parametros da Rede Neural (se manipulados, terá que treinar do zero)
-img_h = 40 # altura da imagem depois de cortar (deve ser multiplo de 4)
-img_w = 120 # largura da imagem depois de cortar (deve ser múltiplo de 4)
+img_h = 40 # altura da imagem depois de cortar (deve ser multiplo de 8)
+img_w = 120 # largura da imagem depois de cortar (deve ser múltiplo de 8)
 CL1_depth = 16 # profundidade do kernel da primeira camada convolucioal
 CL2_depth = 32 # profundidade do kernel da segunda camada convolucional
 CL3_depth = 64 # profundidade do kernel da terceira camada convolucional
@@ -127,38 +127,25 @@ def accuracy(pred_y, true_y):
 	true_labels = np.argmax(true_y, 2)
 	return  np.all(pred_labels == true_labels, 1).mean() * 100
 
-# softmax çoputacionalmente estável (para n ter problema de overflow em exp())
-def stable_softmax(x):
-	if len(x.shape) > 1:
-		tmp = np.max(x, axis = 1)
-		x -= tmp.reshape((x.shape[0], 1))
-		x = np.exp(x)
-		tmp = np.sum(x, axis = 1)
-		x /= tmp.reshape((x.shape[0], 1))
-	
-	else:
-		tmp = np.max(x)
-		x -= tmp
-		x = np.exp(x)
-		tmp = np.sum(x)
-		x /= tmp
-	
-	return x
 
 # converte a previsão do modelo em digitos do captcha
-def sample_digit(y_hat):
+def sample_digit(y_hat, det=False):
 	captcha_solved = [] 
 	for digit in y_hat:
 
-		# converte os scores em probabilidades válidas
-		softmax = stable_softmax(digit) - 0.0005
-		
-		# sorteia o dígito segundo a distribição condicional aprendida
-		sampled = np.random.multinomial(1, softmax)
+		softmax = digit - 1.e-3 # estabiliza probabilidades
 
-		number = str(sampled.argmax())
+		if not det:
+			# sorteia o dígito segundo as probabilidades
+			sampled = np.random.multinomial(1, softmax)
+		
+		else:
+			# acha o dígito segundo o mais provavel
+			sampled = softmax
+
+		number = str(sampled.argmax()) # converte vetor one-hot em str de dígitos
 		if number != '10': # ignora nulos
-			captcha_solved.append(number)
+			captcha_solved.append(number) # adiciona o dígito ao número do captcha
 
 	return ''.join(captcha_solved)
 
@@ -388,21 +375,39 @@ with tf.Session() as sess:
 		feed_pred_dict = {tf_x_input : X_pred, tf_keep_prob:1.0}
 		y_pred = sess.run(prediction, feed_dict=feed_pred_dict) # gera o vetor com scores
 
-		for i in range(X_pred.shape[0]):
+		i = 0
+		det = False
+		while i < (X_pred.shape[0]):
 
-			cpt_figured = sample_digit(y_pred[i]) # sorteia os digitos comforme probabilidade
+			if det:
+				cpt_figured = sample_digit(y_pred[i], det=det) # acha o dígito de maior probabilidade 
+			
+			else:
+				cpt_figured = sample_digit(y_pred[i]) # sorteia os digitos comforme probabilidade
+				det = False # volta à opção estocastica
+
 			plt.imshow(X_pred[i], interpolation='nearest', cmap='binary') # plota a imagem
 			plt.title(cpt_figured, fontsize=40) # coloca o digito previsto como titulo
 			plt.axis('off')
 			plt.show()
 
 			# espera verificação
-			check = raw_input('Está correto?: [s/n]')
+			check = raw_input('Está correto?: [s/n/td/ts]')
 			
 			# se estiver correto, renomeia o arquivo
 			if check == 's':
 				captcha_file = img_files[i]
 				os.system("mv " + captcha_file + ' test_imgs/' + cpt_figured)
+
+			elif check == 'td': # tentando opção deterministica
+				i -= 1 # para tentar de novo
+				det = True 
+
+			elif check == 'ts':
+				i -= 1 # para tentar de novo opção estocastica
+
+			i += 1
+
 
 		exit(0)
 	
