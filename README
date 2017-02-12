@@ -24,3 +24,19 @@ terão que alterar a linha 400 do código para o comando de renomear do o.s.
 Para windows, acredito que a linha deva ser substituída por
 
 os.system("ren " + captcha_file + ' test_imgs/' + cpt_figured)
+
+
+
+
+O programa depende sas seguintes bibliotecas de Python:
+
+glob # para achar os arquivos
+PIL # para manipular as imagens
+numpy # para trabalhar com dados de maneira eficiente
+matplotlib # para visualização
+sklearn # para validação cruzada
+os # para salvar o progresso
+tensorflow as tf # para redes neurais
+time # para cronometrar
+scipy # para manipular imagens como arrays numpy
+sys # para execução na linha de comando
