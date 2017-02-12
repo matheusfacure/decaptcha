@@ -1,0 +1,26 @@
+Para prever CAPTCHAS, baixe as imagens e nomeia-as da forma 'teste[numero]' e mova-as para a pasta test_imgs
+Alguns exemplos de imagens estão no diretório test_imgs.
+
+na linha de comando linux digite:
+
+'python decaptcha_cnn.py predict [imagens]', por exemplo
+
+'python decaptcha_cnn.py predict test_imgs/*'
+
+Se tudo ocorrer bem, aparecerá a imagem do captcha em preto e branco
+e no título da imagem, o que a rede neural pensa que está escrito na imagem
+
+Feche a imagem e você será perguntado se deve renomear a imagem o proposto pela rede neural
+aperte 's' para renomear, 'n' para não renomear.
+
+Além disso, há opções de tentar prever novamente, já que a previsão é feita estocasticamente,
+de acordo com um vetor de probabilidade aprendido pela rede
+
+aperte 'ts' para tentar outra vez e 'td' para tentar outra vez utilizando a opção determinística,
+na qual é previsto apenas os dígitos de maior probabilidade.
+
+USUÁRIOS DE WINDOWS OU MAC
+terão que alterar a linha 400 do código para o comando de renomear do o.s.
+Para windows, acredito que a linha deva ser substituída por
+
+os.system("ren " + captcha_file + ' test_imgs/' + cpt_figured)
