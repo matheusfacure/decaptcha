@@ -15,30 +15,34 @@ from sys import argv, exit # para execução na linha de comando
 ####### Hiper-Parâmetros ############
 #####################################
 
-# Hiper-parametros de treinamento
-learning_rate = 1e-3 # taxa de aprendizado
-keep_prob_train = 0.45 # probabilidade de manter os dados no dropout
-gamma = 0.0005 # fator de regularização dos parâmetros
+# Hiper-parametros de otimização
+learning_rate = 0.01 # taxa de aprendizado
 batch_size = 32 # tamanho do mini-lote
-max_delta = 0.5 # quantidade de luminosidade máxima para ajustar
 rotate = True # se rotaciona os mini-lotes de treino (aumenta bastante o tempo de treino)
-rot_degree = 20 # quantidade máxima de graus para rotacionar a imagem
 restore = True # para resumir o treinamento de um checkpoint ou comecar do zero
 
+# Hiper-parametros de regularização
+keep_prob_train = 0.45 # probabilidade de manter os dados no dropout
+gamma = 0.01 # coedifiente de regularização L2 dos parâmetros das camadas densas
+max_delta = 0.5 # quantidade de luminosidade máxima para ajustar
+rot_degree = 20 # quantidade máxima de graus para rotacionar a imagem
+test_size = 0.03 # proporção do set de teste
+
 # Quantidade de treinamento
-training_iters = 30000 # iterações de treinamento
-display_step = 3000 # regularidade para mostrar resultados
-min_val_acc = 72 # acurácia mínima no set de validação para salvar
+training_iters = 50000 # iterações de treinamento
+display_step = 3000	 # regularidade para mostrar resultados
+min_val_acc = 70 # acurácia mínima no set de validação para salvar
 show_learning = True # plota o custo a cada iteração
 
 # Hiper-parametros da Rede Neural (se manipulados, terá que treinar do zero)
-img_h = 36 # altura da imagem depois de cortar (deve ser multiplo de 4)
+img_h = 40 # altura da imagem depois de cortar (deve ser multiplo de 4)
 img_w = 120 # largura da imagem depois de cortar (deve ser múltiplo de 4)
 CL1_depth = 16 # profundidade do kernel da primeira camada convolucioal
 CL2_depth = 32 # profundidade do kernel da segunda camada convolucional
 CL3_depth = 64 # profundidade do kernel da terceira camada convolucional
+CL4_depth = 128 # profundidade do kernel da quarta camada convolucional
 DL1_size = 128 # tamanho da primeira camada densa
-DL2_size = 128 # tamanho da segunda camada densa
+DL2_size = 32 # tamanho da segunda camada densa
 n_classes = 11  # quantidade de saida (10 dígitos mais nulo)
 seq_len = 6 # tamanho da máxima sequência de dígitos
 
@@ -108,9 +112,9 @@ def get_test_data(img_files):
 
 
 # camada convolucional
-def conv2d(img, w, b, name):
+def conv2d(img, w, b, name, s=1):
 	return tf.nn.relu(tf.nn.bias_add(tf.nn.conv2d(img, w,
-						strides=[1, 1, 1, 1], padding='SAME'), b), name=name)
+						strides=[1, s, s, 1], padding='SAME'), b), name=name)
 
 # camada de max_pool com down-sample de fator 2
 def max_pool(img, name, kk=2, ks=2):
@@ -204,7 +208,8 @@ tf_X = tf.cond(tf.less_equal(tf_keep_prob, 0.98), # usa prob de dropout para sab
 init_wc1 = np.sqrt(6.0 / (img_w * img_h * 1 + img_w * img_h * CL1_depth))
 init_wc2 = np.sqrt(6.0 / (img_w * img_h * CL1_depth + img_w/2 * img_h/2 * CL2_depth))
 init_wc3 = np.sqrt(6.0 / (img_w/2 * img_h/2 * CL2_depth + img_w/4 * img_h/4 * CL3_depth))
-init_wfc1 = np.sqrt(6.0 / (img_w/4 * img_h/4 * CL3_depth + DL1_size))
+init_wc4 = np.sqrt(6.0 / (img_w/4 * img_h/4 * CL3_depth + img_w/8 * img_h/8 * CL4_depth))
+init_wfc1 = np.sqrt(6.0 / (img_w/8 * img_h/8 * CL4_depth + DL1_size))
 init_wfc2 = np.sqrt(6.0 / (DL1_size + DL2_size))
 init_out = np.sqrt(6.0 / (DL2_size + n_classes))
 
@@ -220,8 +225,12 @@ wc2 = tf.Variable(tf.random_uniform([5, 5, CL1_depth, CL2_depth],
 wc3 = tf.Variable(tf.random_uniform([5, 5, CL2_depth, CL3_depth],
 				minval=-init_wc3, maxval=init_wc3), name='wc3')
 
+# Pesos da camada convolucional 4
+wc4 = tf.Variable(tf.random_uniform([3, 3, CL3_depth, CL4_depth],
+				minval=-init_wc4, maxval=init_wc4), name='wc4')
+
 # Pesos da camada densa 1
-wfc1 = tf.Variable(tf.random_uniform([img_h/4 * img_w/4 * CL3_depth, DL1_size],
+wfc1 = tf.Variable(tf.random_uniform([img_h/8 * img_w/8 * CL4_depth, DL1_size],
 				minval=-init_wfc1, maxval=init_wfc1), name='wfc1')
 
 # Pesos da camada densa 2
@@ -251,6 +260,7 @@ wout_log6= tf.Variable(tf.random_uniform([DL2_size, n_classes],
 bc1 = tf.Variable(0.1 * tf.random_normal([CL1_depth]), name='bc1')
 bc2 = tf.Variable(0.1 * tf.random_normal([CL2_depth]), name='bc2')
 bc3 = tf.Variable(0.1 * tf.random_normal([CL3_depth]), name='bc3')
+bc4 = tf.Variable(0.1 * tf.random_normal([CL4_depth]), name='bc4')
 
 # Viés das camadas densas
 bfc1 = tf.Variable(0.1 * tf.random_normal([DL1_size]), name='bfc1')
@@ -278,10 +288,14 @@ conv2 = max_pool(conv2, name='max_pool_l2') # max_pool com down-sampling (diminu
 conv3 = conv2d(conv2, wc3, bc3, name='conv_l3')
 conv3 = max_pool(conv3, name='max_pool_l3') # max_pool com down-sampling (diminui a imagem em um fator de 2)
 
+# Terceira camada convolucional:
+conv4 = conv2d(conv3, wc4, bc4, name='conv_l4')
+conv4 = max_pool(conv4, name='max_pool_l4') # max_pool com down-sampling (diminui a imagem em um fator de 2)
+
 # Primeira camada densa
-fc1 = tf.reshape(conv3, [-1, wfc1.get_shape().as_list()[0]]) # Reformata o output de conv2 para passar à camada densa
+fc1 = tf.reshape(conv4, [-1, wfc1.get_shape().as_list()[0]]) # Reformata o output de conv2 para passar à camada densa
 fc1 = tf.nn.relu(tf.add(tf.matmul(fc1, wfc1), bfc1), name='fc1') 
-fc1 = tf.nn.dropout(fc1, tf_keep_prob, name='drop_out') # drop_outs
+fc1 = tf.nn.dropout(fc1, tf_keep_prob, name='drop_out') # drop_out
 
 # Segunda camada densa
 fc2 = tf.nn.relu(tf.add(tf.matmul(fc1, wfc2), bfc2), name='fc2')
@@ -303,9 +317,6 @@ loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits1, tf_y_inpu
 	tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits4, tf_y_input[:,3])) +\
 	tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits5, tf_y_input[:,4])) +\
 	tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits6, tf_y_input[:,5])) +\
-	gamma*tf.nn.l2_loss(wc1) +\
-	gamma*tf.nn.l2_loss(wc2) +\
-	gamma*tf.nn.l2_loss(wc3) +\
 	gamma*tf.nn.l2_loss(wfc1) +\
 	gamma*tf.nn.l2_loss(wfc2)
 
@@ -315,8 +326,13 @@ optimizer = tf.train.AdagradOptimizer(learning_rate).minimize(loss, global_step=
 
 # Previsão
 # Empilha a previsão de cada dígito para prever a imagem toda
-prediction = tf.pack([logits1, logits2, logits3, logits4, logits5, logits6],
-						axis=1, name='prediction')
+prediction = tf.pack([tf.nn.softmax(logits1),
+					 tf.nn.softmax(logits2),
+					 tf.nn.softmax(logits3),
+					 tf.nn.softmax(logits4),
+					 tf.nn.softmax(logits5),
+					 tf.nn.softmax(logits6)],
+					axis=1, name='prediction')
 
 saver = tf.train.Saver() # Para salvar o modelo
 init = tf.global_variables_initializer() # para inicializar as variáveis
@@ -406,7 +422,8 @@ with tf.Session() as sess:
 	X, y = get_data(5000) # carrega os dados
 
 	# separa os dados em teste de treino e validação
-	X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.04, random_state=1)
+	X_train, X_test, y_train, y_test = train_test_split(X, y,
+										test_size=test_size, random_state=1)
 
 	print 'Dimensões do set de treinamento: ', X_train.shape, y_train.shape
 	print 'Dimensões do set de teste: ', X_test.shape, y_test.shape, '\n\n'
