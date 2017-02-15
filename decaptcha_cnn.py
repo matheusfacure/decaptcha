@@ -16,32 +16,33 @@ from sys import argv, exit # para execução na linha de comando
 #####################################
 
 # Hiper-parametros de otimização
-learning_rate = 0.01 # taxa de aprendizado
-batch_size = 64 # tamanho do mini-lote
-rotate = True # se rotaciona os mini-lotes de treino (aumenta bastante o tempo de treino)
-restore = True # para resumir o treinamento de um checkpoint ou comecar do zero
+learning_rate = 0.05 # taxa de aprendizado
+batch_size = 50	# tamanho do mini-lote
+rotate = False # se rotaciona os mini-lotes de treino (aumenta bastante o tempo de treino)
+restore = False # para resumir o treinamento de um checkpoint ou comecar do zero
 
 # Hiper-parametros de regularização
-keep_prob_train = 0.35 # probabilidade de manter os dados no dropout
-gamma = 0.05 # coedifiente de regularização L2 dos parâmetros das camadas densas
+keep_prob_train = 0.5 # probabilidade de manter os dados no dropout
+gamma = 1e-3 # coefiente de regularização L2 dos parâmetros das camadas densas
 max_delta = 0.5 # quantidade de luminosidade máxima para ajustar
-rot_degree = 20 # quantidade máxima de graus para rotacionar a imagem
+noise = 0.4 # desvio padrão do ruido para adicionar
+rot_degree = 5 # quantidade máxima de graus para rotacionar a imagem
 test_size = 0.03 # proporção do set de teste
 
 # Quantidade de treinamento
-training_iters = 150000 # iterações de treinamento
-display_step = 3000	 # regularidade para mostrar resultados
-min_val_acc = 74 # acurácia mínima no set de validação para salvar
+training_iters = 650000 # iterações de treinamento
+display_step = 5000 # regularidade para mostrar resultados
+min_val_acc = 50 # acurácia mínima no set de validação para salvar
 show_learning = True # plota o custo a cada iteração
 
 # Hiper-parametros da Rede Neural (se manipulados, terá que treinar do zero)
-img_h = 40 # altura da imagem depois de cortar (deve ser multiplo de 8)
+img_h = 32 # altura da imagem depois de cortar (deve ser multiplo de 8)
 img_w = 120 # largura da imagem depois de cortar (deve ser múltiplo de 8)
 CL1_depth = 16 # profundidade do kernel da primeira camada convolucioal
 CL2_depth = 32 # profundidade do kernel da segunda camada convolucional
 CL3_depth = 64 # profundidade do kernel da terceira camada convolucional
 CL4_depth = 128 # profundidade do kernel da quarta camada convolucional
-DL1_size = 128 # tamanho da primeira camada densa
+DL1_size = 64 # tamanho da primeira camada densa
 DL2_size = 32 # tamanho da segunda camada densa
 n_classes = 11  # quantidade de saida (10 dígitos mais nulo)
 seq_len = 6 # tamanho da máxima sequência de dígitos
@@ -112,14 +113,32 @@ def get_test_data(img_files):
 
 
 # camada convolucional
-def conv2d(img, w, b, name, s=1):
-	return tf.nn.relu(tf.nn.bias_add(tf.nn.conv2d(img, w,
-						strides=[1, s, s, 1], padding='SAME'), b), name=name)
+def conv2d(img, w, beta, gamma, name, s=1):
+	
+	# faz convolução
+	conv = tf.nn.conv2d(img, w, strides=[1, s, s, 1], padding='SAME') #+ beta
+	batch_mean, batch_var = tf.nn.moments(conv,[0]) # calcula os momentos 1 e 2 do batch
+
+	# aplica normalização do output
+	conv = tf.nn.batch_normalization(conv,batch_mean,batch_var,beta,gamma,1e-3)
+	return tf.nn.relu(conv, name=name) # aplica não linearidade
+
 
 # camada de max_pool com down-sample de fator 2
 def max_pool(img, name, kk=2, ks=2):
 	return tf.nn.max_pool(img, ksize=[1, kk, kk, 1],
 						strides=[1, ks, ks, 1], padding='SAME', name=name)
+
+# camada densa
+def dense(img, wfc, beta, gamma, name):
+	fc = tf.matmul(img, wfc) #+ beta
+	batch_mean, batch_var = tf.nn.moments(fc,[0]) # calcula os momentos 1 e 2 do batch
+	
+	# aplica normalização do output
+	fc = tf.nn.batch_normalization(fc,batch_mean,batch_var,beta,gamma,1e-3)
+
+	return tf.nn.relu(fc, name=name) # aplica não linearidade
+
 
 # calcula a acurácia
 def accuracy(pred_y, true_y):
@@ -158,15 +177,14 @@ def rotate_batch(imgs):
 	return ndimage.rotate(imgs, graus, mode='nearest', axes=(1,2), reshape=False)   
 
 def augment(image):
-	image = tf.random_crop(image, size=[img_h, img_w, 1]) # ajusta a luminosidade aleatoriamente
-	image = tf.image.random_brightness(image, max_delta, seed=None) # corta a img aleatoriamente
+	image = tf.random_crop(image, size=[img_h, img_w, 1]) # corta a imagem aleatoriamente
+	image = image + tf.random_normal([img_h, img_w, 1], 0, noise) # adiciona ruido
+	image = tf.image.random_brightness(image, max_delta, seed=None) # ajusta a luminosidade aleatoriamente
 	return image
 
 def center_crop(image):
 	image = tf.image.resize_image_with_crop_or_pad(image, img_h, img_w) # corta a imagem no centro
 	return image
-
-
 
 
 run_flags = argv[1:] # argumentos da linha de comando
@@ -243,15 +261,25 @@ wout_log5= tf.Variable(tf.random_uniform([DL2_size, n_classes],
 wout_log6= tf.Variable(tf.random_uniform([DL2_size, n_classes],
 				minval=-init_out, maxval=init_out), name='wout_log6')
 
-# Viés das camadas convolucionais
-bc1 = tf.Variable(0.1 * tf.random_normal([CL1_depth]), name='bc1')
-bc2 = tf.Variable(0.1 * tf.random_normal([CL2_depth]), name='bc2')
-bc3 = tf.Variable(0.1 * tf.random_normal([CL3_depth]), name='bc3')
-bc4 = tf.Variable(0.1 * tf.random_normal([CL4_depth]), name='bc4')
+# Variáveis de normalização das camadas convolucionais
+bc1 = tf.Variable(tf.zeros([CL1_depth]), name='bc1')
+gc1 = tf.Variable(tf.ones([CL1_depth]), name='gc1')
 
-# Viés das camadas densas
-bfc1 = tf.Variable(0.1 * tf.random_normal([DL1_size]), name='bfc1')
-bfc2 = tf.Variable(0.1 * tf.random_normal([DL2_size]), name='bfc2')
+bc2 = tf.Variable(tf.zeros([CL2_depth]), name='bc2')
+gc2 = tf.Variable(tf.ones([CL2_depth]), name='gc2')
+
+bc3 = tf.Variable(tf.zeros([CL3_depth]), name='bc3')
+gc3 = tf.Variable(tf.ones([CL3_depth]), name='gc3')
+
+bc4 = tf.Variable(tf.zeros([CL4_depth]), name='bc4')
+gc4 = tf.Variable(tf.ones([CL4_depth]), name='gc4')
+
+# Variáveis de normalização das camadas densas
+bfc1 = tf.Variable(tf.zeros([DL1_size]), name='bfc1')
+gfc1 = tf.Variable(tf.ones([DL1_size]), name='gfc1')
+
+bfc2 = tf.Variable(tf.zeros([DL2_size]), name='bfc2')
+gfc2 = tf.Variable(tf.ones([DL2_size]), name='gfc2')
 
 # Viés das camadas de saida
 bout_log1 = tf.Variable(0.1 * tf.random_normal([n_classes]), name='bout_log1')
@@ -263,29 +291,29 @@ bout_log6 = tf.Variable(0.1 * tf.random_normal([n_classes]), name='bout_log6')
 
 
 ################ Modelo de Rede Neural Convolucional ##################
-# Primeira camada convolucional
-conv1 = conv2d(tf_X, wc1, bc1, name='conv_l1')
+# Primeira camada convolucional 
+conv1 = conv2d(tf_X, wc1, bc1, gc1, name='conv_l1')
 conv1 = max_pool(conv1, ks=1, name='max_pool_l1') # max_pool sem down-sampling 
 
 # Segunda camada convolucional
-conv2 = conv2d(conv1, wc2, bc2, name='conv_l2')
+conv2 = conv2d(conv1, wc2, bc2, gc2, name='conv_l2')
 conv2 = max_pool(conv2, name='max_pool_l2') # max_pool com down-sampling (diminui a imagem em um fator de 2)
 
 # Terceira camada convolucional:
-conv3 = conv2d(conv2, wc3, bc3, name='conv_l3')
+conv3 = conv2d(conv2, wc3, bc3, gc3, name='conv_l3')
 conv3 = max_pool(conv3, name='max_pool_l3') # max_pool com down-sampling (diminui a imagem em um fator de 2)
 
 # Terceira camada convolucional:
-conv4 = conv2d(conv3, wc4, bc4, name='conv_l4')
+conv4 = conv2d(conv3, wc4, bc4, gc4, name='conv_l4')
 conv4 = max_pool(conv4, name='max_pool_l4') # max_pool com down-sampling (diminui a imagem em um fator de 2)
+conv4 = tf.reshape(conv4, [-1, wfc1.get_shape().as_list()[0]]) # Reformata o output de conv4 para passar à camada densa
 
 # Primeira camada densa
-fc1 = tf.reshape(conv4, [-1, wfc1.get_shape().as_list()[0]]) # Reformata o output de conv2 para passar à camada densa
-fc1 = tf.nn.relu(tf.add(tf.matmul(fc1, wfc1), bfc1), name='fc1') 
+fc1 = dense(conv4, wfc1, bfc1, gfc1, name='fc1')
 fc1 = tf.nn.dropout(fc1, tf_keep_prob, name='drop_out') # drop_out
 
 # Segunda camada densa
-fc2 = tf.nn.relu(tf.add(tf.matmul(fc1, wfc2), bfc2), name='fc2')
+fc2 = dense(fc1, wfc2, bfc2, gfc2, name='fc2')
 
 # Camada de saída
 logits1 = tf.matmul(fc2, wout_log1) + bout_log1
@@ -370,6 +398,9 @@ with tf.Session() as sess:
 		
 		img_files = run_flags[1:] # pega os arquivos das imagens
 		X_pred = get_test_data(img_files) # lê as imagens para teste
+		n_pred_imgs = X_pred.shape[0]
+
+		# TODO: APEND TRAIN IMAGES TO CALCULATE STATISTICS FOR NORMALIZATION
 
 		# alimeta o modelo com as imagens
 		feed_pred_dict = {tf_x_input : X_pred, tf_keep_prob:1.0}
@@ -377,7 +408,7 @@ with tf.Session() as sess:
 
 		i = 0
 		det = False
-		while i < (X_pred.shape[0]):
+		while i < n_pred_imgs:
 
 			if det:
 				cpt_figured = sample_digit(y_pred[i], det=det) # acha o dígito de maior probabilidade 
@@ -424,7 +455,7 @@ with tf.Session() as sess:
 		os.system("rm ./DECAPCHAcheckpoints/*") # comando linux para apagr arquivos
 
 
-	X, y = get_data(5000) # carrega os dados
+	X, y = get_data(10000) # carrega os dados
 
 	# separa os dados em teste de treino e validação
 	X_train, X_test, y_train, y_test = train_test_split(X, y,
@@ -433,18 +464,16 @@ with tf.Session() as sess:
 	print 'Dimensões do set de treinamento: ', X_train.shape, y_train.shape
 	print 'Dimensões do set de teste: ', X_test.shape, y_test.shape, '\n\n'
 	
-	valid_acc = [] # para parada do treinamento e checkpoints 
-	train_loss = []
-	t0 = time() # começa o cronometro
-	no_inprove = 0
-
-	
-	# # para conferir vizualmente se o carregamento dos dados está correto
-	# for i in range(3):
+	# for i in range(10, 20):
 	# 	print '\n', np.argmax(y_train[i], axis=1)
-	# 	plt.imshow(X_train[i], interpolation='nearest', cmap='binary')
+	# 	im = X_train[i, :32, :120]
+	# 	im += np.random.normal(0, 0.3, im.shape)
+	# 	plt.imshow(im, interpolation='nearest', cmap='binary')
 	# 	plt.show()
 
+
+	valid_acc, train_loss = [], [] # para parada do treinamento e checkpoints 
+	t0 = time() # começa o cronometro
 
 	# loop de treinamento
 	for step in range(training_iters):
@@ -464,8 +493,8 @@ with tf.Session() as sess:
 		
 		# mostra os resultados esporadicamente
 		if (i_global % display_step == 0) or (step == training_iters - 1):
+
 			print 'Tempo para rodar %d iterações:' % (step+1), round((time()-t0)/60, 3), 'min'
-			
 			feed_train_dict = {tf_x_input : batch_data, tf_keep_prob:1.0}
 			train_pred = sess.run(prediction, feed_dict=feed_train_dict)
 			acc_train = accuracy(train_pred, batch_labels) 
@@ -481,15 +510,10 @@ with tf.Session() as sess:
 			valid_acc.append(acc_val)
 			
 			# salva o modelo com parada adiantada 
-			if acc_val >= np.max(valid_acc) and acc_val > min_val_acc:
+			if acc_val >= np.max(valid_acc) and acc_val >= min_val_acc:
 				saver.save(sess, save_dir + 'model.ckpt', global_step=i_global+1)
 				print("Checkpoint!\n")
-				no_inprove = 0	
-			
-			# se 100 verificações se passaram sem avanço, sai do treinamento
-			# no_inprove += 1
-			# if no_inprove < 100:
-			# 	break
+
 
 
 	if show_learning:
