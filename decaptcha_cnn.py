@@ -11,6 +11,7 @@ from scipy import ndimage # para manipular imagens
 from sys import argv, exit # para execução na linha de comando
 
 
+
 #####################################
 ####### Hiper-Parâmetros ############
 #####################################
